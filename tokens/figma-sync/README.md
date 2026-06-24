@@ -17,6 +17,7 @@ figma-sync/
   transform.a17.test.mjs  offline proof of the core (npm run sync:test)
   sync.mjs                CLI: export.json → frontend.config.json   (npm run sync)
   sync-server.mjs         localhost receiver the plugin posts to    (npm run sync:serve)
+  github-workflow.template.yml  the CI Action — copy into the CONSUMING app's .github/workflows/
   plugin/                 the Figma plugin (vanilla JS, no build step)
     manifest.json · code.js · ui.html
 ```
@@ -34,8 +35,11 @@ figma-sync/
 ```
 
 Or the GitHub path — same brain, no local server: the plugin commits the export to
-the `figma-sync/incoming` branch, and `.github/workflows/figma-token-sync.yml`
-transforms it and opens/updates a single PR.
+the `figma-sync/incoming` branch of the **consuming app**, and that app's
+`.github/workflows/figma-token-sync.yml` (copied from `github-workflow.template.yml`)
+transforms it and opens/updates a single PR. The Action lives in the consuming app
+because that's where `frontend.config.json` is owned and merged — this toolkit only
+produces it.
 
 `transform.a17.mjs` is the whole brain and is Figma-agnostic — it eats a plain JSON
 export and is covered by `transform.a17.test.mjs`. The plugin and server are thin.
@@ -61,11 +65,16 @@ npm run sync -- export.json --report          # coverage only
 
 ## Usage via GitHub (no local server)
 
-1. In the plugin, fill in **GitHub repo** (`owner/name`) and a **fine-grained PAT**
-   (Contents: Read/Write on this repo), then **Sync to GitHub & open PR**.
+> **One-time setup in the consuming app:** copy `github-workflow.template.yml` to
+> `.github/workflows/figma-token-sync.yml` there. Without it, the export just lands on
+> the `incoming` branch and nothing transforms it.
+
+1. In the plugin, fill in **GitHub repo** (`owner/name` — the **consuming app**, not
+   this toolkit) and a **fine-grained PAT** (Contents: Read/Write on that repo), then
+   **Sync to GitHub & open PR**.
 2. The plugin commits the export to the **`figma-sync/incoming`** branch. That push
-   triggers `.github/workflows/figma-token-sync.yml`, which transforms the export and
-   opens/updates a single **sync PR** — but only if `frontend.config.json` actually
+   triggers the consuming app's `figma-token-sync.yml`, which transforms the export
+   and opens/updates a single **sync PR** — but only if `frontend.config.json` actually
    drifted (no diff ⇒ no PR).
 3. Review and merge like any other PR.
 
