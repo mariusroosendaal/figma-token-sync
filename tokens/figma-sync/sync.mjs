@@ -70,6 +70,10 @@ export function runSync({ exportData, report = false, dryRun = false, onlyFiles 
       log(`\nUnparsed (${rpt.unparsed.length}):`);
       rpt.unparsed.forEach((u) => log(`  ⚠ ${u}`));
     }
+    if (rpt.preserved?.length) {
+      log(`\nPreserved from existing config (no Figma source):`);
+      rpt.preserved.forEach((p) => log(`  • ${p}`));
+    }
     if (rpt.notes?.length) {
       log('\nNotes:');
       rpt.notes.forEach((n) => log(`  • ${n}`));
