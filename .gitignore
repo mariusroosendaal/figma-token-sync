@@ -1,0 +1,8 @@
+# On-demand Figma exports (large, transient — produced by the plugin, never tracked).
+# The GitHub flow commits this to the figma-sync/incoming branch via the API, which
+# ignores .gitignore; it never lands on main or in a PR.
+tokens/figma-sync/figma-export.json
+*.figma-export.json
+
+node_modules/
+.DS_Store

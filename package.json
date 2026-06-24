@@ -1,0 +1,13 @@
+{
+  "name": "figma-token-sync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic, no-LLM Figma → design-token sync. A Figma plugin reads variables/styles; a pure transformer emits an A17 frontend.config.json; an optional GitHub Action opens a token PR on drift.",
+  "type": "module",
+  "scripts": {
+    "sync": "node tokens/figma-sync/sync.mjs",
+    "sync:serve": "node tokens/figma-sync/sync-server.mjs",
+    "sync:test": "node tokens/figma-sync/transform.a17.test.mjs"
+  },
+  "license": "MIT"
+}
