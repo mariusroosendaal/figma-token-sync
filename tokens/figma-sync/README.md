@@ -81,6 +81,24 @@ npm run sync -- export.json --report          # coverage only
 Repo/token are remembered in Figma `clientStorage` (local, never committed). The
 export is read off the `incoming` branch by the Action and never reaches `main`.
 
+### Drift check (prototype)
+
+**Check drift vs GitHub** in the plugin answers "does Figma differ from the repo?"
+without a sync or a PR. It reads the current variables, fetches the committed
+`frontend.config.json` **and the repo's own `transform.a17.mjs` + `diff.mjs`** off the
+default branch (Contents API — same `api.github.com` already used to sync, read-only),
+runs the transform in the plugin, and diffs against the committed config. The badge
+says either *in sync* or *Figma and the committed config differ in N elements*, and the
+differing tokens are listed below. It reports **that** they differ, not which side is
+"right" — review the listed changes to decide.
+
+Because it fetches the transform/diff live from the repo, it always runs the **same
+logic** as the CLI and CI — no duplicated transform in the plugin. Source-drift
+detection lives here (not in CI) by necessity: only the plugin can read variables
+(the Variables REST API is Enterprise-only). Prototype caveats: the config path is
+assumed to be `frontend.config.json` at the repo root, and module loading uses `eval`
+in the UI iframe (fine there; never in the plugin's main thread).
+
 **Token:** a **fine-grained PAT** scoped to this repo with **Contents: Read/Write**.
 **One repo setting:** Settings → Actions → General → *Workflow permissions* → enable
 **"Allow GitHub Actions to create and approve pull requests."**
