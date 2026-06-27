@@ -1,28 +1,22 @@
 #!/usr/bin/env node
 /**
- * CLI: a Figma export JSON → token files → build.
+ * CLI: a Figma export JSON → frontend.config.json.
  *
  *   node tokens/figma-sync/sync.mjs <export.json> [flags]
  *
  * Flags:
- *   --report          print collection/style coverage, write nothing
- *   --dry-run         transform + diff against current files, write nothing
- *   --only=a,b        only emit these files (e.g. --only=color,dimension)
- *   --no-build        skip running the build step after writing
+ *   --report     print collection/style coverage, write nothing
+ *   --dry-run    transform + diff against the current config, write nothing
  *
  * Deterministic core the companion server and CI both call. No network, no LLM.
- * Project wiring (where tokens live, which transformer, the build step) comes
- * from figma-sync.config.mjs at the repo root; the fallbacks below are used when
- * no config is present (e.g. dropped straight into a tokens/ dir).
+ * Project wiring (where the config lives, which transformer) comes from
+ * figma-sync.config.mjs at the repo root; the fallbacks below are used when no
+ * config is present (e.g. dropped straight into a tokens/ dir).
  */
 import { readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { execFileSync } from 'node:child_process';
 import { diffTokens } from './diff.mjs';
-
-// re-exported for back-compat (was defined here before extraction to diff.mjs)
-export { diffTokens } from './diff.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -42,11 +36,10 @@ const CFG_PATH = findUp('figma-sync.config.mjs', HERE);
 const CFG = CFG_PATH ? (await import(pathToFileURL(CFG_PATH))).default : {};
 const ROOT = CFG_PATH ? dirname(CFG_PATH) : join(HERE, '..');
 const TOKENS_DIR = CFG.tokensDir ? join(ROOT, CFG.tokensDir) : join(HERE, '..');
-const BUILD = CFG.build ? join(ROOT, CFG.build) : null; // no build step by default
 const TRANSFORM_PATH = CFG.transform ? join(ROOT, CFG.transform) : join(HERE, 'transform.a17.mjs');
 const { transform, TOKEN_FILES } = await import(pathToFileURL(TRANSFORM_PATH));
 
-export function runSync({ exportData, report = false, dryRun = false, onlyFiles = null, build = true, log = console.log }) {
+export function runSync({ exportData, report = false, dryRun = false, log = console.log }) {
   const existing = {};
   for (const f of TOKEN_FILES) {
     const p = join(TOKENS_DIR, f);
@@ -57,19 +50,9 @@ export function runSync({ exportData, report = false, dryRun = false, onlyFiles 
   const { files, report: rpt } = transform(exportData, { existing, onWarn: (m) => warnings.push(m) });
 
   if (report) {
-    // The report shape is transform-specific; render whatever this one provides.
-    if (rpt.collections) {
-      log('\nCollections:');
-      for (const [name, where] of Object.entries(rpt.collections)) log(`  ${where.startsWith('→') ? '✓' : '✗'} ${name.padEnd(24)} ${where}`);
-    }
     if (rpt.breakpoints?.length) log(`\nBreakpoints:   ${rpt.breakpoints.join(', ')}`);
     if (rpt.colorTokens != null) log(`Color tokens:  ${rpt.colorTokens}`);
-    if (rpt.ramp) log(`Type ramp:     ${rpt.ramp.styles} text styles → ${rpt.ramp.roles} roles`);
     if (rpt.typesets != null) log(`Typesets:      ${rpt.typesets}`);
-    if (rpt.effectStyles) {
-      log(`Effect styles: ${rpt.effectStyles.matched} matched, ${rpt.effectStyles.skipped.length} skipped`);
-      if (rpt.effectStyles.skipped.length) log(`  skipped: ${rpt.effectStyles.skipped.join(', ')}`);
-    }
     if (rpt.unparsed?.length) {
       log(`\nUnparsed (${rpt.unparsed.length}):`);
       rpt.unparsed.forEach((u) => log(`  ⚠ ${u}`));
@@ -87,11 +70,10 @@ export function runSync({ exportData, report = false, dryRun = false, onlyFiles 
     return { files, warnings, report: rpt, written: [] };
   }
 
-  const targets = Object.keys(files).filter((f) => !onlyFiles || onlyFiles.includes(f));
   const written = [];        // files actually written (empty on dry-run)
   const changedFiles = [];   // files that differ from disk (populated either way)
   const changes = [];        // per-token diffs, file-prefixed, for the UI/CLI
-  for (const f of targets) {
+  for (const f of Object.keys(files)) {
     const p = join(TOKENS_DIR, f);
     const next = JSON.stringify(files[f], null, 2) + '\n';
     const prev = existsSync(p) ? readFileSync(p, 'utf8') : '';
@@ -111,13 +93,7 @@ export function runSync({ exportData, report = false, dryRun = false, onlyFiles 
   }
 
   warnings.forEach((w) => log(`  ⚠ ${w}`));
-
-  if (!dryRun && build && BUILD && written.length) {
-    log('\nRunning build …');
-    execFileSync('node', [BUILD], { stdio: 'inherit' });
-  } else if (dryRun) {
-    log(`\nDry run: ${changedFiles.length} file(s) would change. Nothing written.`);
-  }
+  if (dryRun) log(`\nDry run: ${changedFiles.length} file(s) would change. Nothing written.`);
   return { files, warnings, report: rpt, written, changed: changedFiles, changes };
 }
 
@@ -126,12 +102,10 @@ export function runSync({ exportData, report = false, dryRun = false, onlyFiles 
 if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   const args = process.argv.slice(2);
   const flags = new Set(args.filter((a) => a.startsWith('--')));
-  const onlyArg = args.find((a) => a.startsWith('--only='));
-  const only = onlyArg ? onlyArg.split('=')[1].split(',').map((s) => s.endsWith('.json') ? s : `${s}.json`) : null;
   const exportPath = args.find((a) => !a.startsWith('--'));
 
   if (!exportPath) {
-    console.error('usage: sync.mjs <export.json> [--report|--dry-run|--only=a,b|--no-build]');
+    console.error('usage: sync.mjs <export.json> [--report|--dry-run]');
     process.exit(2);
   }
   if (!existsSync(exportPath)) {
@@ -145,7 +119,5 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.a
     exportData,
     report: flags.has('--report'),
     dryRun: flags.has('--dry-run'),
-    onlyFiles: only,
-    build: !flags.has('--no-build'),
   });
 }

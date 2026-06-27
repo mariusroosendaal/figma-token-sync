@@ -10,8 +10,7 @@ export default {
   tokensDir: '.',
 
   // The A17-dedicated transformer (single frontend.config.json, self-contained).
+  // The consuming app builds CSS from frontend.config.json with its own Tailwind
+  // config — this toolkit only produces the JSON, so there's no build step here.
   transform: 'tokens/figma-sync/transform.a17.mjs',
-
-  // Emit JSON only — the consuming app builds CSS from frontend.config.json.
-  build: null,
 };

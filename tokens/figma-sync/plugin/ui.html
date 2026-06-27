@@ -66,7 +66,6 @@
     <span><b id="cVars">0</b> vars</span>
     <span><b id="cCols">0</b> collections</span>
     <span><b id="cText">0</b> text styles</span>
-    <span><b id="cFx">0</b> effect styles</span>
   </div>
 
   <div class="badge" id="badge" role="status" aria-live="polite" hidden></div>
@@ -208,22 +207,29 @@
     log(`✗ ${prefix} (${r.status}${detail ? ': ' + detail : ''})`, 'err');
   }
 
-  async function pushToGitHub(data) {
+  // resolve repo coordinates + default branch (the base both GitHub actions need)
+  // and persist repo/token. Returns null after logging on failure → caller bails.
+  async function ghRepo() {
     const api = 'https://api.github.com';
     const repo = $('repo').value.trim();
     const token = $('token').value.trim();
     const [owner, name] = repo.split('/');
-    // persist for next time (clientStorage, local to this Figma client)
-    persist(); // save repo + token (and current tab)
+    persist(); // save repo + token (and current tab), local to this Figma client
+    const r = await fetch(`${api}/repos/${owner}/${name}`, { headers: ghHeaders(token) });
+    if (!r.ok) { await ghErr(r, 'Repo not found or token lacks access'); return null; }
+    const base = (await r.json()).default_branch || 'main';
+    return { api, repo, owner, name, token, base };
+  }
+
+  async function pushToGitHub(data) {
     try {
+      const ctx = await ghRepo();
+      if (!ctx) return;
+      const { api, repo, owner, name, token, base } = ctx;
       log(`Pushing export to ${repo} @ ${GH_BRANCH} …`);
 
-      // default branch + its head sha — a new sync branch starts from here
-      let r = await fetch(`${api}/repos/${owner}/${name}`, { headers: ghHeaders(token) });
-      if (!r.ok) return ghErr(r, 'Repo not found or token lacks access');
-      const base = (await r.json()).default_branch || 'main';
-
-      r = await fetch(`${api}/repos/${owner}/${name}/git/ref/heads/${base}`, { headers: ghHeaders(token) });
+      // a new sync branch starts from the default branch's head sha
+      let r = await fetch(`${api}/repos/${owner}/${name}/git/ref/heads/${base}`, { headers: ghHeaders(token) });
       if (!r.ok) return ghErr(r, `Could not read the ${base} branch`);
       const baseSha = (await r.json()).object.sha;
 
@@ -299,16 +305,11 @@
   }
 
   async function checkDrift(data) {
-    const api = 'https://api.github.com';
-    const repo = $('repo').value.trim();
-    const token = $('token').value.trim();
-    const [owner, name] = repo.split('/');
-    persist(); // save repo + token (and current tab)
     try {
+      const ctx = await ghRepo();
+      if (!ctx) return;
+      const { api, repo, owner, name, token, base } = ctx;
       log(`Checking drift vs ${repo} …`);
-      let r = await fetch(`${api}/repos/${owner}/${name}`, { headers: ghHeaders(token) });
-      if (!r.ok) return ghErr(r, 'Repo not found or token lacks access');
-      const base = (await r.json()).default_branch || 'main';
 
       // committed config + the repo's own transform/diff, all off the default branch
       const [cfgSrc, transformSrc, diffSrc] = await Promise.all([
@@ -353,7 +354,6 @@
       $('cVars').textContent = msg.counts.variables;
       $('cCols').textContent = msg.counts.collections;
       $('cText').textContent = msg.counts.textStyles;
-      $('cFx').textContent = msg.counts.effectStyles;
       if (pending === 'download') download(msg.data);
       else if (pending === 'github') pushToGitHub(msg.data);
       else if (pending === 'drift') checkDrift(msg.data);

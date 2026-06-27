@@ -1,7 +1,7 @@
 // Figma Token Sync — plugin main thread.
 //
-// Reads every LOCAL variable collection, text style, and effect style and
-// normalizes them into the export shape that ../transform.a17.mjs consumes. The
+// Reads every LOCAL variable collection and text style and normalizes them into
+// the export shape that ../transform.a17.mjs consumes. The
 // UI (ui.html) posts that export to the localhost companion server, or saves
 // it to disk. Pure read — this plugin never writes to the Figma file.
 
@@ -71,25 +71,11 @@ async function buildExport() {
     boundVariables: boundIds(s.boundVariables),
   }));
 
-  const effectStyles = (await figma.getLocalEffectStylesAsync()).map((s) => ({
-    id: s.id,
-    name: s.name,
-    effects: s.effects.map((e) => ({
-      type: e.type,
-      color: e.color, // { r, g, b, a }
-      offset: e.offset, // { x, y }
-      radius: e.radius,
-      spread: e.spread,
-      boundVariables: boundIds(e.boundVariables),
-    })),
-  }));
-
   return {
     version: 1,
     fileName: figma.root.name,
     collections,
     textStyles,
-    effectStyles,
   };
 }
 
@@ -115,7 +101,6 @@ figma.ui.onmessage = async (msg) => {
         collections: data.collections.length,
         variables: data.collections.reduce((n, c) => n + c.variables.length, 0),
         textStyles: data.textStyles.length,
-        effectStyles: data.effectStyles.length,
       };
       figma.ui.postMessage({ type: 'export-data', data, counts });
     } catch (err) {

@@ -1,91 +1,118 @@
 # figma-token-sync
 
-A **deterministic, no-LLM** pipeline that pulls Figma variables, text styles, and
-effect styles into a single **`frontend.config.json`** for
-[`@area17/a17-tailwind-plugins`](https://github.com/area17/tailwind-plugins) — and
-(optionally) opens a GitHub PR whenever the design drifts from the repo. One-way:
-**Figma owns the values**, the config is regenerated from them.
-
-This repo only **produces** `frontend.config.json`. The consuming app (e.g. an
-[a17 Tailwind](https://area17.github.io/tailwind-plugins/) project) builds its CSS
-from that config with its own `tailwind.config`.
-
-> Why no LLM: the Figma **Variables REST API is Enterprise-only**, and relaying a
-> few hundred values through a model is exactly the non-determinism this avoids. A
-> plugin reads variables via the Plugin API (every plan), and a pure transformer
-> writes the result.
+A deterministic pipeline that pulls Figma variables and text styles into a
+single **`frontend.config.json`** for
+[`@area17/a17-tailwind-plugins`](https://github.com/area17/tailwind-plugins), and
+optionally opens a PR when the design drifts. One-way: **Figma owns the values.** This
+repo only *produces* the config; the consuming app builds its CSS from it.
 
 ## Layout
 
 ```
 figma-token-sync/
   figma-sync.config.mjs       wiring: output dir + which transformer
-  frontend.config.json        GENERATED from Figma — the deliverable
+  frontend.config.json        GENERATED — the deliverable
   tokens/figma-sync/          the toolkit
-    transform.a17.mjs         the deterministic core: export → frontend.config.json
-    transform.a17.test.mjs    offline proof of the core (npm run sync:test)
-    sync.mjs                  CLI: export.json → frontend.config.json   (npm run sync)
-    sync-server.mjs           localhost receiver the plugin posts to    (npm run sync:serve)
-    plugin/                   the Figma plugin (vanilla JS, no build step)
-  .github/workflows/          the "drift → PR" Action
+    transform.a17.mjs(.test)  the deterministic core: export → config (+ offline test)
+    diff.mjs(.test)           pure token-diff helpers, shared by CLI + plugin drift check
+    sync.mjs                  CLI: export.json → config         (npm run sync)
+    sync-server.mjs           localhost receiver for the plugin (npm run sync:serve)
+    install.sh                vendors the toolkit into a consuming app
+    github-workflow.template.yml   the "drift → PR" Action — copy into the consuming app
+    plugin/                   the Figma plugin (vanilla JS, no build)
 ```
+
+The `tokens/figma-sync/` nesting mirrors the *install layout* — where `install.sh`
+vendors the toolkit — and the repo root doubles as a sample consuming app
+(`tokensDir: '.'`), so the toolkit can be dogfooded in place.
 
 ## What it generates
 
-`transform.a17.mjs` reads the Figma export and emits the four sections the a17
-plugins consume:
+`frontend.config.json` has four sections; all routing lives in `CONFIG` at the top of
+`transform.a17.mjs`.
 
-| `frontend.config.json` | from Figma |
+| Section | Source in Figma |
 | --- | --- |
-| `structure` — `breakpoints`, `columns`, `gutters.{inner,outer}`, `container` | the `responsive` collection: `…/breakpoint`, `layout/columns`, `layout/gutter` (inner), `layout/margin` (outer) |
-| `spacing` — `tokens.scaler` + per-breakpoint `groups` | the `space/*` scale |
-| `color` — flat `tokens` + semantic `border`/`text`/`background` | color primitives + the semantic `color` collection (light theme) |
-| `typography` — `families` + responsive `typesets` | `font family/*` stacks + text styles (`<role>/<bp>`) |
+| `structure.breakpoints` | the `responsive` collection's `…/breakpoint` variable (per mode) |
+| `structure.columns` | `layout/columns` (per breakpoint) |
+| `structure.gutters.inner` / `.outer` | `layout/gutter` / `layout/margin` |
+| `structure.container` | defaults to `"auto"` — no Figma source |
+| `spacing.tokens.scaler` + `.groups` | `CONFIG.spacingScaler` + the `space/*` scale |
+| `color.tokens` | color primitives, names flattened (`color/gray/950` → `gray-950`) |
+| `color.border` / `.text` / `.background` | the semantic `color` collection (light theme) |
+| `typography.families` | `font family/<x>` (+ `-stack`) primitives |
+| `typography.typesets` | text styles named `<role>/<bp>` → one typeset per role |
 
-### Conventions (how the Figma file is read)
+### Conventions
 
-- A **variable's name is its path** — `layout/columns`, `color/gray/950`.
-- **`_` / `.`-prefixed** collections, groups, modes, and variables are **private** —
-  design-time aids, never emitted (e.g. a `_grid` group, a `_wireframe` proofing mode).
-  A token that *aliases* a private value still resolves it.
-- **`font family/<x>-stack`** holds the CSS fallback stack for family `<x>`.
-- **Text styles** are named `<role>/<bp>` (or `<role>/<bp-range>`, `+ -strong`) →
-  one responsive typeset per role; `-strong` becomes the typeset's `bold-weight`.
-- Breakpoint keys are kept as named, except **`2xl` → `xxl`** (a leading digit is an
-  invalid CSS class prefix). Color names are flattened, collapsing `X/X` → `X`.
+- **A variable's name is its path** — `layout/columns`, `color/gray/950`.
+- **Private** — names starting with `_` or `.` are design-time aids, never emitted; a
+  token that *aliases* a private value still resolves it.
+- **`font family/<x>-stack`** holds the CSS fallback stack for `<x>` (quoting normalized).
+- **Text styles** `<role>/<bp>` (or `<bp-range>`, `+ -strong`) → one responsive typeset
+  per role; `-strong` sets the typeset's `bold-weight`. Unrecognized trailing segments are
+  skipped with a warning (`report.unparsed`).
+- **`2xl` → `xxl`** (a CSS class can't start with a digit); **`X/X` → `X`**
+  (`white/white` → `white`).
 
 ## Use it — local loop
 
 ```bash
 npm run sync:serve            # start the localhost receiver
-# In Figma: run the plugin → "Read & Sync to repo"
+# In Figma: plugin → Local server tab → "Read & Sync to repo"
 git diff frontend.config.json # review, then commit
 ```
 
-CLI (from a downloaded export):
+Or sync from a downloaded export via the CLI:
 
 ```bash
-npm run sync -- export.json              # write frontend.config.json
-npm run sync -- export.json --dry-run    # preview, write nothing
-npm run sync -- export.json --report     # coverage only (use this when adapting)
+npm run sync -- export.json [--dry-run] [--report]   # --report = coverage, write nothing
 ```
+
+> Restart the server after editing `transform.a17.mjs` (Node caches modules at start; the
+> CLI runs fresh). Port: `FIGMA_SYNC_PORT=xxxx` — also update `plugin/manifest.json`.
 
 ## Use it — GitHub PR loop (no local server)
 
-1. In the plugin, set **GitHub repo** (`owner/name`) + a **fine-grained PAT**
-   (Contents: Read/Write on this repo), then **Sync to GitHub & open PR**.
-2. The plugin commits the export to the **`figma-sync/incoming`** branch; that push
-   triggers `.github/workflows/figma-token-sync.yml`, which transforms it and
-   opens/updates a single PR — only if `frontend.config.json` drifted.
-3. Review and merge.
+> **One-time setup in the consuming app:** copy `github-workflow.template.yml` to
+> `.github/workflows/figma-token-sync.yml` (or run `install.sh`), and enable Settings →
+> Actions → General → Workflow permissions → *Allow GitHub Actions to create and approve
+> pull requests*.
 
-One repo setting: **Settings → Actions → General → Workflow permissions →
-"Allow GitHub Actions to create and approve pull requests."**
+On the plugin's **GitHub** tab, set the repo (`owner/name` — the *consuming app*) and a
+fine-grained PAT (Contents: Read/Write), then **Sync to GitHub & open PR**. The plugin
+commits the export to `figma-sync/incoming`; that push triggers the Action, which
+transforms it and opens/updates a single PR — only if the config drifted. Repo/token are
+remembered in Figma `clientStorage` (local). The export never reaches `main`.
+
+**Check drift vs GitHub** answers "does Figma differ from the repo?" without a sync. It
+fetches the committed config *and the repo's own `transform.a17.mjs` + `diff.mjs`* off the
+default branch, runs the transform in the plugin, and diffs — so it always runs the same
+logic as CI. It reports *that* they differ, not which side is right. (Prototype: assumes
+`frontend.config.json` at the repo root; loads the modules via `eval` in the UI iframe.)
 
 ## Installing the plugin (once)
 
 Figma → **Plugins → Development → Import plugin from manifest…** → pick
-`tokens/figma-sync/plugin/manifest.json`. Runs locally; no publishing. Network
-access is limited to `http://localhost:41789` and `https://api.github.com`.
+`tokens/figma-sync/plugin/manifest.json`. Runs locally, no publishing; network limited to
+`localhost:41789` and `api.github.com`.
 
-See `tokens/figma-sync/README.md` for the full mapping reference and tuning notes.
+## Tuning & robustness
+
+If your Figma names differ, run a real export through `--report` and adjust `CONFIG` in
+`transform.a17.mjs` (`collections`, `structure` leaf names, `breakpoints` /
+`breakpointAlias`, `spacingPrefix` / `spacingScaler`, `fontFamilyStacks`).
+
+**Solid:** structure, colors, families, typesets. **Verify on first run** (flagged in
+`report.notes`): **spacing** (numeric `space/*` → a17 `groups`), **container** (defaults to
+`"auto"`; real widths you set are preserved across syncs), and **dark theme** (a17 color is
+single-value, so only light values emit).
+
+## Notes
+
+- **One-way.** Per-token docs live in Figma variable/text-style descriptions. Editing a
+  Figma-owned value in the config is futile — the next sync reverts it.
+- **Reconciliation.** A sync rebuilds only what Figma owns and carries forward the rest —
+  `structure.container`, `ratios`, app-added keys (listed in `report.preserved`).
+- **Exports aren't tracked** — gitignored; the GitHub flow commits them only to
+  `figma-sync/incoming`.
